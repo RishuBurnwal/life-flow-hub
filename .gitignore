@@ -1,0 +1,7 @@
+node_modules/
+dist/
+
+# Large local media assets (tracked separately if needed)
+public/music/*.mp3
+public/music/*.mp4
+public/music/*.webm
