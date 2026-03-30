@@ -1,5 +1,4 @@
 import { create } from 'zustand';
-import { persist } from 'zustand/middleware';
 import { v4 as uuid } from 'uuid';
 import { taskService } from '@/db/taskService';
 import { goalService } from '@/db/goalService';
@@ -11,6 +10,7 @@ import { sdlcService } from '@/db/sdlcService';
 import { calendarService } from '@/db/calendarService';
 import { stickyNoteService } from '@/db/stickyNoteService';
 import { resetProjectDatabase } from '@/db/projectDb';
+import { appMetaService } from '@/db/appMetaService';
 import type {
   Project, Task, TaskStatus, ThemeName, ViewName,
   Goal, Habit, HabitLog, JournalEntry, PomodoroSession, MoodType, HabitFrequency, MindmapNode, SdlcPhase, CalendarEvent, StickyNote,
@@ -34,6 +34,11 @@ interface AppState {
   // Projects
   projects: Project[];
   activeProjectId: string | null;
+  showGreetingScreen: boolean;
+  isInitialized: boolean;
+  initializeApp: () => Promise<void>;
+  refreshProjects: () => Promise<void>;
+  dismissGreetingScreen: () => void;
   setActiveProject: (id: string) => void;
   hydrateProject: (id: string) => Promise<void>;
   addProject: (name: string, description?: string, color?: string) => string;
@@ -138,6 +143,16 @@ interface AIConfig {
   preferApi?: boolean;
 }
 
+export interface TimezoneFavorite {
+  id: string;
+  timezone: string;
+  customName: string;
+  offset: string; // e.g., "+05:30"
+  createdAt: string;
+}
+
+export type WatchFormat = 'digital' | 'analog' | 'hybrid';
+
 interface ClockSettings {
   primaryTimezone: string;
   secondaryTimezone?: string | null;
@@ -146,9 +161,12 @@ interface ClockSettings {
   secondaryFormat24h: boolean;
   primaryDigitalSkin: string;
   secondaryDigitalSkin: string;
+  primaryWatchFormat?: WatchFormat;
+  secondaryWatchFormat?: WatchFormat;
   weatherEnabled?: boolean;
   weatherUnit?: 'c' | 'f';
   weatherLocationName?: string;
+  timezoneFavorites?: TimezoneFavorite[];
   // Backward compatibility for persisted state from previous versions.
   format24h?: boolean;
   digitalSkin?: string;
@@ -157,215 +175,27 @@ interface ClockSettings {
 
 const COLORS = ['#C46D4E', '#8B9E6B', '#5B8A9A', '#6B7DB3', '#B37DB3', '#B3896B', '#6BB39E', '#9E6B8B'];
 
-const DEMO_PROJECT_ID = 'demo-project';
-const DEMO_NOW = new Date();
-const DEMO_NOW_ISO = DEMO_NOW.toISOString();
-const DEMO_TODAY = DEMO_NOW_ISO.slice(0, 10);
-const DEMO_TOMORROW = new Date(DEMO_NOW.getTime() + 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+const DEFAULT_AI_CONFIG: AIConfig = {
+  provider: 'browser',
+  model: 'Xenova/distilgpt2',
+  hfModelId: 'Xenova/distilgpt2',
+  preferApi: false,
+};
 
-const DEMO_PROJECTS: Project[] = [
-  {
-    id: DEMO_PROJECT_ID,
-    name: 'Demo Workspace',
-    description: 'Seeded workspace with sample data for every section.',
-    color: COLORS[0],
-    createdAt: DEMO_NOW_ISO,
-    updatedAt: DEMO_NOW_ISO,
-  },
-];
-
-const DEMO_TASKS: Task[] = [
-  {
-    id: 'demo-task-1',
-    projectId: DEMO_PROJECT_ID,
-    title: 'Kickoff planning meeting',
-    description: 'Align milestones and owners.',
-    status: 'todo',
-    priority: 'high',
-    tags: ['planning'],
-    parentId: null,
-    goalId: 'demo-goal-1',
-    kanbanColumn: 'todo',
-    startDate: DEMO_TODAY,
-    deadline: DEMO_TODAY,
-    estimateMins: 45,
-    actualMins: null,
-    pomodoroCount: 0,
-    createdAt: DEMO_NOW_ISO,
-    updatedAt: DEMO_NOW_ISO,
-  },
-  {
-    id: 'demo-task-2',
-    projectId: DEMO_PROJECT_ID,
-    title: 'Prototype UI review',
-    description: 'Review first iteration with team.',
-    status: 'in_progress',
-    priority: 'medium',
-    tags: ['design'],
-    parentId: null,
-    goalId: null,
-    kanbanColumn: 'in_progress',
-    startDate: DEMO_TODAY,
-    deadline: DEMO_TOMORROW,
-    estimateMins: 90,
-    actualMins: 30,
-    pomodoroCount: 1,
-    createdAt: DEMO_NOW_ISO,
-    updatedAt: DEMO_NOW_ISO,
-  },
-];
-
-const DEMO_GOALS: Goal[] = [
-  {
-    id: 'demo-goal-1',
-    projectId: DEMO_PROJECT_ID,
-    title: 'Ship MVP dashboard',
-    description: 'Core workflow screens ready for beta.',
-    level: 'quarterly',
-    parentId: null,
-    progress: 35,
-    targetDate: DEMO_TOMORROW,
-    createdAt: DEMO_NOW_ISO,
-    updatedAt: DEMO_NOW_ISO,
-  },
-];
-
-const DEMO_HABITS: Habit[] = [
-  {
-    id: 'demo-habit-1',
-    projectId: DEMO_PROJECT_ID,
-    name: 'Daily standup notes',
-    description: 'Capture top priorities every morning.',
-    frequency: 'daily',
-    color: COLORS[1],
-    createdAt: DEMO_NOW_ISO,
-  },
-];
-
-const DEMO_HABIT_LOGS: HabitLog[] = [
-  {
-    id: 'demo-habit-log-1',
-    habitId: 'demo-habit-1',
-    date: DEMO_TODAY,
-    completed: true,
-  },
-];
-
-const DEMO_JOURNAL: JournalEntry[] = [
-  {
-    id: 'demo-journal-1',
-    projectId: DEMO_PROJECT_ID,
-    title: 'Sprint reflection',
-    content: 'Good velocity today. Need clearer QA handoff tomorrow.',
-    mood: 'good',
-    tags: ['sprint', 'retro'],
-    createdAt: DEMO_NOW_ISO,
-    updatedAt: DEMO_NOW_ISO,
-  },
-];
-
-const DEMO_CALENDAR_EVENTS: CalendarEvent[] = [
-  {
-    id: 'demo-cal-1',
-    projectId: DEMO_PROJECT_ID,
-    title: 'Team standup',
-    description: '15-min async sync to align blockers.',
-    date: DEMO_TODAY,
-    time: '09:30',
-    location: 'Huddle Room A',
-    color: COLORS[2],
-    allDay: false,
-    createdAt: DEMO_NOW_ISO,
-    updatedAt: DEMO_NOW_ISO,
-  },
-  {
-    id: 'demo-cal-2',
-    projectId: DEMO_PROJECT_ID,
-    title: 'Release review',
-    description: 'Walk through demo scope and QA results.',
-    date: DEMO_TOMORROW,
-    time: '15:00',
-    location: 'Video call',
-    color: COLORS[3],
-    allDay: false,
-    createdAt: DEMO_NOW_ISO,
-    updatedAt: DEMO_NOW_ISO,
-  },
-];
-
-const DEMO_POMODORO: PomodoroSession[] = [
-  {
-    id: 'demo-pomo-1',
-    projectId: DEMO_PROJECT_ID,
-    taskId: 'demo-task-2',
-    startedAt: DEMO_NOW_ISO,
-    duration: 25,
-    type: 'work',
-    completed: true,
-  },
-];
-
-const DEMO_MINDMAP: MindmapNode[] = [
-  {
-    id: 'demo-node-root',
-    projectId: DEMO_PROJECT_ID,
-    label: 'Launch Plan',
-    description: 'Root planning node',
-    parentId: null,
-    x: 0,
-    y: 0,
-    expanded: true,
-    taskId: null,
-    color: null,
-    priority: null,
-    createdAt: DEMO_NOW_ISO,
-  },
-  {
-    id: 'demo-node-child',
-    projectId: DEMO_PROJECT_ID,
-    label: 'Marketing Tasks',
-    description: 'Child node example',
-    parentId: 'demo-node-root',
-    x: 0,
-    y: 0,
-    expanded: true,
-    taskId: 'demo-task-1',
-    color: null,
-    priority: 'medium',
-    createdAt: DEMO_NOW_ISO,
-  },
-];
-
-const DEMO_STICKY_NOTES: StickyNote[] = [
-  {
-    id: 'demo-note-1',
-    projectId: DEMO_PROJECT_ID,
-    title: 'Launch checklist',
-    content: 'Collect QA sign-off, update changelog, announce in team channel.',
-    color: '#FFE59A',
-    linkedNodeId: 'demo-node-root',
-    x: 28,
-    y: 130,
-    createdAt: DEMO_NOW_ISO,
-    updatedAt: DEMO_NOW_ISO,
-  },
-];
-
-const DEMO_SDLC: SdlcPhase[] = [
-  {
-    id: 'demo-sdlc-1',
-    projectId: DEMO_PROJECT_ID,
-    name: 'Planning',
-    description: 'Define scope and requirements.',
-    status: 'planned',
-    owner: 'Team Lead',
-    startDate: DEMO_TODAY,
-    endDate: DEMO_TOMORROW,
-    risk: 'Low',
-    createdAt: DEMO_NOW_ISO,
-    updatedAt: DEMO_NOW_ISO,
-  },
-];
+const DEFAULT_CLOCK_SETTINGS: ClockSettings = {
+  primaryTimezone: (typeof Intl !== 'undefined' ? Intl.DateTimeFormat().resolvedOptions().timeZone : 'Asia/Kolkata') || 'Asia/Kolkata',
+  secondaryTimezone: 'Etc/UTC',
+  secondaryEnabled: true,
+  primaryFormat24h: false,
+  secondaryFormat24h: false,
+  primaryDigitalSkin: 'minimal',
+  secondaryDigitalSkin: 'minimal',
+  primaryWatchFormat: 'digital',
+  secondaryWatchFormat: 'digital',
+  weatherEnabled: true,
+  weatherUnit: 'c',
+  timezoneFavorites: [],
+};
 
 const taskPersistTimers: Record<string, number | undefined> = {};
 const mindmapPersistTimers: Record<string, number | undefined> = {};
@@ -497,19 +327,89 @@ const scheduleStickyPersist = (projectId: string, getNotes: () => StickyNote[]) 
   }, 300);
 };
 
+const persistProjectsMeta = async (projects: Project[]) => {
+  try {
+    await appMetaService.setProjects(projects);
+  } catch (e) {
+    console.error('Failed to persist projects metadata', e);
+  }
+};
+
+const persistActiveProjectMeta = async (projectId: string | null) => {
+  try {
+    await appMetaService.set('activeProjectId', projectId);
+  } catch (e) {
+    console.error('Failed to persist active project metadata', e);
+  }
+};
+
 export const useStore = create<AppState>()(
-  persist(
-    (set, get) => ({
+  (set, get) => ({
       theme: 'terracotta',
       setTheme: (theme) => {
         document.documentElement.setAttribute('data-theme', theme);
         set({ theme });
+        appMetaService.set('theme', theme).catch((e) => console.error('Failed to persist theme', e));
       },
 
-      projects: DEMO_PROJECTS,
-      activeProjectId: DEMO_PROJECT_ID,
+      projects: [],
+      activeProjectId: null,
+      showGreetingScreen: false,
+      isInitialized: false,
+      initializeApp: async () => {
+        try {
+          const [projects, activeProjectId, theme, aiConfig, clockSettings, greetingSeen, activeView, sidebarCollapsed] = await Promise.all([
+            appMetaService.getProjects(),
+            appMetaService.get<string | null>('activeProjectId', null),
+            appMetaService.get<ThemeName>('theme', 'terracotta'),
+            appMetaService.get<AIConfig>('aiConfig', DEFAULT_AI_CONFIG),
+            appMetaService.get<ClockSettings>('clockSettings', DEFAULT_CLOCK_SETTINGS),
+            appMetaService.get<boolean>('greetingSeen', false),
+            appMetaService.get<ViewName>('activeView', 'todo'),
+            appMetaService.get<boolean>('sidebarCollapsed', false),
+          ]);
+
+          const normalizedProjects = projects || [];
+          const nextActive = normalizedProjects.find((p) => p.id === activeProjectId)?.id || normalizedProjects[0]?.id || null;
+
+          set({
+            projects: normalizedProjects,
+            activeProjectId: nextActive,
+            theme,
+            aiConfig,
+            clockSettings,
+            showGreetingScreen: !greetingSeen,
+            activeView,
+            sidebarCollapsed,
+          });
+
+          document.documentElement.setAttribute('data-theme', theme);
+
+          if (nextActive) {
+            await get().hydrateProject(nextActive);
+          }
+        } finally {
+          set({ isInitialized: true });
+        }
+      },
+      refreshProjects: async () => {
+        try {
+          console.log('[refreshProjects] Loading projects from SQLite');
+          const freshProjects = await appMetaService.getProjects();
+          console.log('[refreshProjects] Loaded projects count:', freshProjects?.length || 0);
+          set({ projects: freshProjects || [] });
+          console.log('[refreshProjects] Store updated with fresh projects');
+        } catch (e) {
+          console.error('[refreshProjects] Failed to refresh projects from SQLite', e);
+        }
+      },
+      dismissGreetingScreen: () => {
+        set({ showGreetingScreen: false });
+        appMetaService.set('greetingSeen', true).catch((e) => console.error('Failed to persist greeting flag', e));
+      },
       setActiveProject: (id) => {
         set({ activeProjectId: id });
+        persistActiveProjectMeta(id);
         get().hydrateProject(id).catch((e) => console.error('Hydrate project failed', e));
       },
       hydrateProject: async (id) => {
@@ -526,21 +426,24 @@ export const useStore = create<AppState>()(
           stickyNoteService.getAll(id),
         ]);
 
-        set((s) => ({
-          tasks: [...s.tasks.filter((t) => t.projectId !== id), ...tasks],
-          goals: [...s.goals.filter((g) => g.projectId !== id), ...goalsResult],
-          journalEntries: [...s.journalEntries.filter((j) => j.projectId !== id), ...journalEntries],
-          pomodoroSessions: [...s.pomodoroSessions.filter((p) => p.projectId !== id), ...pomodoroSessions],
-          habits: [...s.habits.filter((h) => h.projectId !== id), ...habitsResult.habits],
-          habitLogs: [
-            ...s.habitLogs.filter((l) => habitsResult.habitIds?.includes(l.habitId) === false),
-            ...habitsResult.logs,
-          ],
-          mindmapNodes: [...s.mindmapNodes.filter((n) => n.projectId !== id), ...mindmapNodes],
-          stickyNotes: [...s.stickyNotes.filter((n) => n.projectId !== id), ...stickyNotes],
-          sdlcPhases: [...s.sdlcPhases.filter((p) => p.projectId !== id), ...sdlcPhases],
-          calendarEvents: [...s.calendarEvents.filter((e) => e.projectId !== id), ...calendarEvents],
-        }));
+        set((s) => {
+          const projectHabitIds = s.habits.filter((h) => h.projectId === id).map((h) => h.id);
+          return {
+            tasks: [...s.tasks.filter((t) => t.projectId !== id), ...tasks],
+            goals: [...s.goals.filter((g) => g.projectId !== id), ...goalsResult],
+            journalEntries: [...s.journalEntries.filter((j) => j.projectId !== id), ...journalEntries],
+            pomodoroSessions: [...s.pomodoroSessions.filter((p) => p.projectId !== id), ...pomodoroSessions],
+            habits: [...s.habits.filter((h) => h.projectId !== id), ...habitsResult.habits],
+            habitLogs: [
+              ...s.habitLogs.filter((l) => !projectHabitIds.includes(l.habitId)),
+              ...habitsResult.logs,
+            ],
+            mindmapNodes: [...s.mindmapNodes.filter((n) => n.projectId !== id), ...mindmapNodes],
+            stickyNotes: [...s.stickyNotes.filter((n) => n.projectId !== id), ...stickyNotes],
+            sdlcPhases: [...s.sdlcPhases.filter((p) => p.projectId !== id), ...sdlcPhases],
+            calendarEvents: [...s.calendarEvents.filter((e) => e.projectId !== id), ...calendarEvents],
+          };
+        });
       },
       addProject: (name, description = '', color) => {
         const id = uuid();
@@ -550,32 +453,52 @@ export const useStore = create<AppState>()(
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
         };
-        set((s) => ({ projects: [...s.projects, project], activeProjectId: id }));
+        set((s) => {
+          const projects = [...s.projects, project];
+          console.log('[addProject] Creating project:', name, 'ID:', id, 'Total projects:', projects.length);
+          persistProjectsMeta(projects).then(() => {
+            console.log('[addProject] Project saved to SQLite:', id);
+          }).catch((e) => {
+            console.error('[addProject] Failed to persist to SQLite', e);
+          });
+          persistActiveProjectMeta(id).catch((e) => {
+            console.error('[addProject] Failed to persist active project', e);
+          });
+          return { projects, activeProjectId: id };
+        });
         resetProjectDatabase(id).catch((e) => console.error('Init project DB failed', e));
         return id;
       },
       deleteProject: (id) =>
-        set((s) => ({
-          projects: s.projects.filter((p) => p.id !== id),
-          tasks: s.tasks.filter((t) => t.projectId !== id),
-          goals: s.goals.filter((g) => g.projectId !== id),
-          habits: s.habits.filter((h) => h.projectId !== id),
-          habitLogs: s.habitLogs.filter((l) => s.habits.find((h) => h.id === l.habitId)?.projectId !== id),
-          journalEntries: s.journalEntries.filter((j) => j.projectId !== id),
-          pomodoroSessions: s.pomodoroSessions.filter((p) => p.projectId !== id),
-          mindmapNodes: s.mindmapNodes.filter((n) => n.projectId !== id),
-          stickyNotes: s.stickyNotes.filter((n) => n.projectId !== id),
-          sdlcPhases: s.sdlcPhases.filter((p) => p.projectId !== id),
-          calendarEvents: s.calendarEvents.filter((e) => e.projectId !== id),
-          activeProjectId: s.activeProjectId === id ? (s.projects.find((p) => p.id !== id)?.id ?? null) : s.activeProjectId,
-        })),
+        set((s) => {
+          const projects = s.projects.filter((p) => p.id !== id);
+          const activeProjectId = s.activeProjectId === id ? (projects[0]?.id ?? null) : s.activeProjectId;
+          persistProjectsMeta(projects);
+          persistActiveProjectMeta(activeProjectId);
+          return {
+            projects,
+            tasks: s.tasks.filter((t) => t.projectId !== id),
+            goals: s.goals.filter((g) => g.projectId !== id),
+            habits: s.habits.filter((h) => h.projectId !== id),
+            habitLogs: s.habitLogs.filter((l) => s.habits.find((h) => h.id === l.habitId)?.projectId !== id),
+            journalEntries: s.journalEntries.filter((j) => j.projectId !== id),
+            pomodoroSessions: s.pomodoroSessions.filter((p) => p.projectId !== id),
+            mindmapNodes: s.mindmapNodes.filter((n) => n.projectId !== id),
+            stickyNotes: s.stickyNotes.filter((n) => n.projectId !== id),
+            sdlcPhases: s.sdlcPhases.filter((p) => p.projectId !== id),
+            calendarEvents: s.calendarEvents.filter((e) => e.projectId !== id),
+            activeProjectId,
+          };
+        }),
       renameProject: (id, name) =>
-        set((s) => ({
-          projects: s.projects.map((p) => (p.id === id ? { ...p, name, updatedAt: new Date().toISOString() } : p)),
-        })),
+        set((s) => {
+          const projects = s.projects.map((p) => (p.id === id ? { ...p, name, updatedAt: new Date().toISOString() } : p));
+          persistProjectsMeta(projects);
+          return { projects };
+        }),
 
       // Tasks
-      tasks: DEMO_TASKS,
+      tasks: [],
       addTask: (partial) => {
         const id = uuid();
         const projectId = partial.projectId || get().activeProjectId;
@@ -632,7 +555,7 @@ export const useStore = create<AppState>()(
         }),
 
       // Goals
-      goals: DEMO_GOALS,
+      goals: [],
       addGoal: (partial) => {
         const id = uuid();
         const projectId = partial.projectId || get().activeProjectId;
@@ -669,8 +592,8 @@ export const useStore = create<AppState>()(
         }),
 
       // Habits
-      habits: DEMO_HABITS,
-      habitLogs: DEMO_HABIT_LOGS,
+      habits: [],
+      habitLogs: [],
       addHabit: (partial) => {
         const id = uuid();
         const projectId = partial.projectId || get().activeProjectId;
@@ -710,7 +633,7 @@ export const useStore = create<AppState>()(
         }),
 
       // Journal
-      journalEntries: DEMO_JOURNAL,
+      journalEntries: [],
       addJournalEntry: (partial) => {
         const id = uuid();
         const projectId = partial.projectId || get().activeProjectId;
@@ -746,7 +669,7 @@ export const useStore = create<AppState>()(
         }),
 
       // Calendar events
-      calendarEvents: DEMO_CALENDAR_EVENTS,
+      calendarEvents: [],
       addCalendarEvent: (partial) => {
         const id = uuid();
         const projectId = partial.projectId || get().activeProjectId;
@@ -795,7 +718,7 @@ export const useStore = create<AppState>()(
         sessionsCompleted: 0,
         activeTaskId: null,
       },
-      pomodoroSessions: DEMO_POMODORO,
+      pomodoroSessions: [],
       setPomodoroRunning: (running) => set((s) => ({ pomodoro: { ...s.pomodoro, isRunning: running } })),
       setPomodoroTimeLeft: (time) => set((s) => ({ pomodoro: { ...s.pomodoro, timeLeft: time } })),
       setPomodoroSessionType: (type) =>
@@ -906,7 +829,7 @@ export const useStore = create<AppState>()(
         }),
 
       // Mindmap
-      mindmapNodes: DEMO_MINDMAP,
+      mindmapNodes: [],
       addMindmapNode: (partial) => {
         const id = uuid();
         const projectId = partial.projectId || get().activeProjectId;
@@ -947,7 +870,7 @@ export const useStore = create<AppState>()(
           if (node?.projectId) scheduleStickyPersist(node.projectId, () => get().stickyNotes);
           return { mindmapNodes, stickyNotes };
         }),
-      stickyNotes: DEMO_STICKY_NOTES,
+      stickyNotes: [],
       addStickyNote: (partial) => {
         const id = uuid();
         const projectId = partial.projectId || get().activeProjectId;
@@ -987,7 +910,7 @@ export const useStore = create<AppState>()(
         }),
 
       // SDLC
-      sdlcPhases: DEMO_SDLC,
+      sdlcPhases: [],
       addSdlcPhase: (partial) => {
         const id = uuid();
         const projectId = partial.projectId || get().activeProjectId;
@@ -1025,10 +948,18 @@ export const useStore = create<AppState>()(
         }),
 
       activeView: 'todo',
-      setActiveView: (view) => set({ activeView: view }),
+      setActiveView: (view) => {
+        set({ activeView: view });
+        appMetaService.set('activeView', view).catch((e) => console.error('Failed to persist active view', e));
+      },
 
       sidebarCollapsed: false,
-      toggleSidebar: () => set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),
+      toggleSidebar: () =>
+        set((s) => {
+          const sidebarCollapsed = !s.sidebarCollapsed;
+          appMetaService.set('sidebarCollapsed', sidebarCollapsed).catch((e) => console.error('Failed to persist sidebar state', e));
+          return { sidebarCollapsed };
+        }),
       aiPanelOpen: false,
       toggleAiPanel: () => set((s) => ({ aiPanelOpen: !s.aiPanelOpen })),
       commandPaletteOpen: false,
@@ -1036,57 +967,25 @@ export const useStore = create<AppState>()(
       focusMode: false,
       toggleFocusMode: () => set((s) => ({ focusMode: !s.focusMode })),
 
-      aiConfig: {
-        provider: 'browser',
-        model: 'Xenova/Phi-3-mini-4k-instruct',
-        hfModelId: 'Xenova/Phi-3-mini-4k-instruct',
-        preferApi: false,
-      },
-      setAiConfig: (config) => set((s) => ({ aiConfig: { ...s.aiConfig, ...config } })),
+      aiConfig: DEFAULT_AI_CONFIG,
+      setAiConfig: (config) =>
+        set((s) => {
+          const aiConfig = { ...s.aiConfig, ...config };
+          appMetaService.set('aiConfig', aiConfig).catch((e) => console.error('Failed to persist AI config', e));
+          return { aiConfig };
+        }),
 
-      clockSettings: {
-        primaryTimezone: (typeof Intl !== 'undefined' ? Intl.DateTimeFormat().resolvedOptions().timeZone : 'Asia/Kolkata') || 'Asia/Kolkata',
-        secondaryTimezone: 'Etc/UTC',
-        secondaryEnabled: true,
-        primaryFormat24h: false,
-        secondaryFormat24h: false,
-        primaryDigitalSkin: 'minimal',
-        secondaryDigitalSkin: 'minimal',
-        weatherEnabled: true,
-        weatherUnit: 'c',
-      },
-      setClockSettings: (settings) => set((s) => ({ clockSettings: { ...s.clockSettings, ...settings } })),
+      clockSettings: DEFAULT_CLOCK_SETTINGS,
+      setClockSettings: (settings) =>
+        set((s) => {
+          const clockSettings = { ...s.clockSettings, ...settings };
+          appMetaService.set('clockSettings', clockSettings).catch((e) => console.error('Failed to persist clock settings', e));
+          return { clockSettings };
+        }),
 
       getProjectTasks: (projectId) => get().tasks.filter((t) => t.projectId === projectId),
       getTasksByStatus: (projectId, status) =>
         get().tasks.filter((t) => t.projectId === projectId && t.status === status),
-    }),
-    {
-      name: 'lifeos_global',
-      partialize: (state) => ({
-        theme: state.theme,
-        projects: state.projects,
-        tasks: state.tasks,
-        calendarEvents: state.calendarEvents,
-        goals: state.goals,
-        habits: state.habits,
-        habitLogs: state.habitLogs,
-        journalEntries: state.journalEntries,
-        pomodoroSessions: state.pomodoroSessions,
-        mindmapNodes: state.mindmapNodes,
-        stickyNotes: state.stickyNotes,
-        sdlcPhases: state.sdlcPhases,
-        pomodoro: {
-          workDuration: state.pomodoro.workDuration,
-          breakDuration: state.pomodoro.breakDuration,
-          sessionsCompleted: state.pomodoro.sessionsCompleted,
-        },
-        activeProjectId: state.activeProjectId,
-        activeView: state.activeView,
-        sidebarCollapsed: state.sidebarCollapsed,
-        aiConfig: state.aiConfig,
-        clockSettings: state.clockSettings,
-      }),
-    }
-  )
+    })
 );
+

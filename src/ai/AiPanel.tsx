@@ -3,7 +3,25 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Bot, X, Send, MessageCircle, Loader2, Minus } from 'lucide-react';
 import { useStore } from '@/stores/useStore';
 import { useIsMobile } from '@/hooks/use-mobile';
-import { chat } from '@/ai/aiEngine';
+import { chat, getAiRuntimeMode, subscribeAiRuntimeMode, type AIRuntimeMode } from './aiEngine';
+
+const DEFAULT_SKILLS = [
+  'chat',
+  'task_breakdown',
+  'sdlc_planner',
+  'time_estimator',
+  'daily_brief',
+  'risk_detector',
+  'habit_coach',
+  'journal_analyser',
+  'brain_dump_parser',
+  'dependency_mapper',
+  'okr_coach',
+  'workspace_reader',
+  'command_executor',
+  'file_editor',
+  'task_controller',
+];
 
 type ChatMessage = {
   id: string;
@@ -22,20 +40,25 @@ export function AiPanel() {
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
   const [minimized, setMinimized] = useState(false);
+  const [selectedSkill, setSelectedSkill] = useState('chat');
+  const [runtimeMode, setRuntimeMode] = useState<AIRuntimeMode>(getAiRuntimeMode());
   const listRef = useRef<HTMLDivElement | null>(null);
 
   const quickPrompts = useMemo(() => [
-    { label: 'Plan', text: 'Plan my next three tasks and suggest priorities based on deadlines.' },
-    { label: 'Execute', text: 'Given my current tasks, propose the next actionable step with a 30-minute plan.' },
-    { label: 'Soul', text: 'Give me a concise motivation note and a focus mantra.' },
+    { label: 'Plan', text: 'Plan my next three tasks and suggest priorities based on deadlines.', skill: 'task_breakdown' },
+    { label: 'Execute', text: 'Given my current tasks, propose the next actionable step with a 30-minute plan.', skill: 'time_estimator' },
+    { label: 'Soul', text: 'Give me a concise motivation note and a focus mantra.', skill: 'daily_brief' },
+    { label: 'Brain', text: 'Summarize what you have learned about my workflow and suggest 2 behavior tweaks.', skill: 'brain_dump_parser' },
+    { label: 'Files', text: '/list .', skill: 'workspace_reader' },
+    { label: 'Tasks', text: '/tasks list', skill: 'task_controller' },
   ], []);
 
   useEffect(() => {
-    if (aiConfig.provider !== 'browser' || aiConfig.model !== 'Xenova/phi-2') {
+    if (aiConfig.provider !== 'browser' || aiConfig.model !== 'Xenova/distilgpt2') {
       setAiConfig({
         provider: 'browser',
-        model: 'Xenova/phi-2',
-        hfModelId: 'Xenova/phi-2',
+        model: 'Xenova/distilgpt2',
+        hfModelId: 'Xenova/distilgpt2',
         preferApi: false,
         apiKey: undefined,
       });
@@ -43,13 +66,20 @@ export function AiPanel() {
   }, [aiConfig.provider, aiConfig.model, setAiConfig]);
 
   useEffect(() => {
+    return subscribeAiRuntimeMode((mode) => {
+      setRuntimeMode(mode);
+    });
+  }, []);
+
+  useEffect(() => {
     if (!listRef.current) return;
     listRef.current.scrollTop = listRef.current.scrollHeight;
   }, [messages]);
 
-  const sendMessage = async (text?: string) => {
+  const sendMessage = async (text?: string, forcedSkill?: string) => {
     const content = (text ?? input).trim();
     if (!content) return;
+    const skillName = (forcedSkill || selectedSkill || 'chat').trim();
     const userMsg: ChatMessage = { id: crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(), role: 'user', content };
     setMessages((prev) => [...prev, userMsg]);
     setInput('');
@@ -59,7 +89,7 @@ export function AiPanel() {
       const data = await chat({
         projectId: activeProjectId || 'global',
         message: content,
-        skillName: 'chat',
+        skillName,
       });
       const contentResp = (data as any)?.message?.content || (data as any)?.response || 'No response received.';
       const botMsg: ChatMessage = { id: crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-bot`, role: 'assistant', content: contentResp };
@@ -118,6 +148,16 @@ export function AiPanel() {
           <div className="flex items-center gap-2">
             <Bot className="w-4 h-4 text-primary" />
             {!minimized && <span className="text-sm font-medium">AI Assistant</span>}
+            {!minimized && (
+              <span className="text-[10px] rounded-full border border-border bg-muted px-2 py-0.5 text-muted-foreground">
+                {runtimeMode === 'local-model' && 'Mode: Local model'}
+                {runtimeMode === 'remote-fallback' && 'Mode: Remote fallback'}
+                {runtimeMode === 'lightweight-fallback' && 'Mode: Lightweight fallback'}
+                {runtimeMode === 'loading' && 'Mode: Loading'}
+                {runtimeMode === 'error' && 'Mode: Error'}
+                {runtimeMode === 'idle' && 'Mode: Idle'}
+              </span>
+            )}
           </div>
           <div className="flex items-center gap-2">
             <button
@@ -139,13 +179,28 @@ export function AiPanel() {
             {quickPrompts.map((qp) => (
               <button
                 key={qp.label}
-                onClick={() => sendMessage(qp.text)}
+                onClick={() => sendMessage(qp.text, qp.skill)}
                 className="px-2 py-1 rounded-full bg-muted hover:bg-muted/80 transition-colors"
                 disabled={sending}
               >
                 {qp.label}
               </button>
             ))}
+          </div>
+          <div className="flex items-center gap-2">
+            <label className="text-[11px] text-muted-foreground">Skill</label>
+            <select
+              className="h-7 rounded-md border border-border bg-background px-2 text-[11px]"
+              value={selectedSkill}
+              onChange={(e) => setSelectedSkill(e.target.value)}
+              disabled={sending}
+            >
+              {DEFAULT_SKILLS.map((skill) => (
+                <option key={skill} value={skill}>
+                  {skill}
+                </option>
+              ))}
+            </select>
           </div>
           <div ref={listRef} className="flex-1 overflow-y-auto space-y-2 pr-1 scrollbar-thin">
             {messages.map((msg) => (

@@ -1,0 +1,12 @@
+# Git LFS
+*.onnx
+*.bin
+*.pt
+*.ckpt
+*.tflite
+*.pb
+*.h5
+*.mp3
+*.mp4
+*.webm
+*.wasm

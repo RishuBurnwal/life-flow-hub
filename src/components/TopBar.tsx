@@ -2,22 +2,15 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useStore } from '@/stores/useStore';
 import type { ThemeName } from '@/types';
 import { ClockWidget } from './ClockWidget';
-import { Plus, Search, Bot, Maximize2, Minimize2, Calendar, SunMoon, CloudSun, Loader2 } from 'lucide-react';
+import { Plus, Search, Bot, Maximize2, Minimize2, Calendar, SunMoon, CloudSun, Loader2, Star, Trash2, Edit2, Check, X } from 'lucide-react';
 import { addMonths, eachDayOfInterval, endOfMonth, format, isToday, startOfMonth } from 'date-fns';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useToast } from '@/hooks/use-toast';
 import { useWeather } from '@/hooks/use-weather';
+import { GMT_TIMEZONES, TZ_PRESETS, CLOCK_SKINS, WATCH_FORMATS, getTimezoneOffset } from '@/utils/timezones';
+import { v4 as uuid } from 'uuid';
 
 type ClockTarget = 'primary' | 'secondary';
-
-const CLOCK_SKINS = ['minimal', 'retro', 'glass', 'neon', 'bold', 'dots'] as const;
-
-const TZ_PRESETS = [
-  { code: 'Etc/UTC', label: 'GMT', location: 'Greenwich, United Kingdom' },
-  { code: 'Asia/Kolkata', label: 'IST', location: 'India, Kolkata' },
-  { code: 'America/Los_Angeles', label: 'PST', location: 'United States, Los Angeles' },
-  { code: 'America/New_York', label: 'EST', location: 'United States, New York' },
-];
 
 const normalizeTz = (tz: string) => {
   switch (tz) {
@@ -34,12 +27,21 @@ const normalizeTz = (tz: string) => {
   }
 };
 
-const tzLabel = (tz: string) => TZ_PRESETS.find((t) => t.code === tz)?.label || tz;
+const tzLabel = (tz: string) => {
+  const preset = TZ_PRESETS.find((t) => t.code === tz);
+  const gmtOption = GMT_TIMEZONES.find((t) => t.code === tz);
+  if (preset) return preset.label;
+  if (gmtOption) return gmtOption.label;
+  return tz;
+};
 
 const tzLocation = (tz: string) => {
   const normalized = normalizeTz(tz);
   const preset = TZ_PRESETS.find((t) => t.code === normalized);
+  const gmtOption = GMT_TIMEZONES.find((t) => t.code === normalized);
+  
   if (preset) return `${preset.label} • ${preset.location}`;
+  if (gmtOption) return `${gmtOption.label} • ${gmtOption.location}`;
 
   const parts = normalized.split('/');
   if (parts.length >= 2) {
@@ -78,6 +80,12 @@ export function TopBar() {
   const [clockSettingsAnchor, setClockSettingsAnchor] = useState<DOMRect | null>(null);
   const [clockSettingsTarget, setClockSettingsTarget] = useState<ClockTarget | null>(null);
   const [holidays, setHolidays] = useState<Record<string, string>>({});
+  
+  // Timezone selector state
+  const [showTimezoneSelector, setShowTimezoneSelector] = useState(false);
+  const [timezoneSearch, setTimezoneSearch] = useState('');
+  const [editingFavorite, setEditingFavorite] = useState<string | null>(null);
+  const [favoriteNameInput, setFavoriteNameInput] = useState('');
 
   const calendarRef = useRef<HTMLDivElement | null>(null);
   const settingsRef = useRef<HTMLDivElement | null>(null);
@@ -93,6 +101,8 @@ export function TopBar() {
   const secondaryFormat24h = clockSettings.secondaryFormat24h ?? clockSettings.format24h ?? false;
   const primaryDigitalSkin = clockSettings.primaryDigitalSkin ?? clockSettings.digitalSkin ?? 'minimal';
   const secondaryDigitalSkin = clockSettings.secondaryDigitalSkin ?? clockSettings.analogSkin ?? 'minimal';
+  const primaryWatchFormat = clockSettings.primaryWatchFormat || 'digital';
+  const secondaryWatchFormat = clockSettings.secondaryWatchFormat || 'digital';
   const secondaryEnabled = clockSettings.secondaryEnabled !== false;
 
   const weather = useWeather(Boolean(clockSettings.weatherEnabled ?? true), clockSettings.weatherUnit ?? 'c', tzLocation(primaryTz));
@@ -200,7 +210,14 @@ export function TopBar() {
       setClockSettingsAnchor(null);
       setClockSettingsTarget(null);
     };
-    const handleScrollClose = () => {
+    const handleScrollClose = (event: Event) => {
+      const target = event.target as Node | null;
+
+      // Keep overlays open when scrolling inside their own content (e.g. timezone list).
+      if (target && ((calendarRef.current && calendarRef.current.contains(target)) || (settingsRef.current && settingsRef.current.contains(target)))) {
+        return;
+      }
+
       setCalendarAnchor(null);
       setClockSettingsAnchor(null);
       setClockSettingsTarget(null);
@@ -278,8 +295,9 @@ export function TopBar() {
               locationLabel={tzLocation(primaryTz)}
               format24h={primaryFormat24h}
               skin={primaryDigitalSkin as any}
+              watchFormat={primaryWatchFormat as any}
               secondaryTime={secondaryTime}
-              showAnalog={false}
+              showAnalog={primaryWatchFormat !== 'digital'}
               compact
               onOpenCalendar={handleOpenCalendar}
               onOpenSettings={(anchor) => openClockSettings('primary')(anchor)}
@@ -292,7 +310,8 @@ export function TopBar() {
                 locationLabel={tzLocation(secondaryTz)}
                 format24h={secondaryFormat24h}
                 skin={secondaryDigitalSkin as any}
-                showAnalog={false}
+                watchFormat={secondaryWatchFormat as any}
+                showAnalog={secondaryWatchFormat !== 'digital'}
                 compact
                 onOpenCalendar={handleOpenCalendar}
                 onOpenSettings={(anchor) => openClockSettings('secondary')(anchor)}
@@ -418,6 +437,18 @@ export function TopBar() {
                     ))}
                   </select>
                 </label>
+                <label className="block space-y-1">
+                  <span className="text-muted-foreground">Watch format</span>
+                  <select
+                    className="w-full rounded border border-border bg-background px-2 py-1"
+                    value={clockSettings.primaryWatchFormat || 'digital'}
+                    onChange={(e) => setClockSettings({ primaryWatchFormat: e.target.value as any })}
+                  >
+                    {WATCH_FORMATS.map((fmt) => (
+                      <option key={fmt} value={fmt}>{fmt}</option>
+                    ))}
+                  </select>
+                </label>
                 <p className="text-muted-foreground">Timezone is locked to your system local timezone.</p>
               </div>
             ) : (
@@ -431,18 +462,151 @@ export function TopBar() {
                     onChange={(e) => setClockSettings({ secondaryEnabled: e.target.checked })}
                   />
                 </label>
-                <label className="block space-y-1">
+                
+                <div className="block space-y-2">
                   <span className="text-muted-foreground">Timezone</span>
-                  <select
-                    className="w-full rounded border border-border bg-background px-2 py-1"
-                    value={secondaryTz}
-                    onChange={(e) => setClockSettings({ secondaryTimezone: e.target.value, secondaryEnabled: true })}
-                  >
-                    {TZ_PRESETS.map((preset) => (
-                      <option key={preset.code} value={preset.code}>{preset.label} - {preset.location}</option>
-                    ))}
-                  </select>
-                </label>
+                  <div className="relative">
+                    <button
+                      onClick={() => setShowTimezoneSelector(!showTimezoneSelector)}
+                      className="w-full rounded border border-border bg-background px-2 py-1 text-left text-xs hover:bg-muted flex items-center justify-between"
+                    >
+                      <span>{tzLabel(secondaryTz)}</span>
+                      <span className="text-muted-foreground" style={{fontSize: '10px'}}>▼</span>
+                    </button>
+                    
+                    {showTimezoneSelector && (
+                      <div className="absolute top-full left-0 right-0 mt-1 bg-background border border-border rounded shadow-lg z-50 max-h-48 overflow-y-auto">
+                        <input
+                          type="text"
+                          placeholder="Search timezone..."
+                          className="w-full px-2 py-1 text-xs border-b border-border bg-background focus:outline-none"
+                          value={timezoneSearch}
+                          onChange={(e) => setTimezoneSearch(e.target.value)}
+                        />
+                        <div className="max-h-40 overflow-y-auto">
+                          {[...TZ_PRESETS, ...GMT_TIMEZONES]
+                            .filter(tz => 
+                              tz.label.toLowerCase().includes(timezoneSearch.toLowerCase()) ||
+                              tz.location.toLowerCase().includes(timezoneSearch.toLowerCase()) ||
+                              ("offset" in tz && typeof tz.offset === 'string' && tz.offset.includes(timezoneSearch))
+                            )
+                            .map((tz) => (
+                              <button
+                                key={tz.code}
+                                onClick={() => {
+                                  setClockSettings({ secondaryTimezone: tz.code, secondaryEnabled: true });
+                                  setShowTimezoneSelector(false);
+                                  setTimezoneSearch('');
+                                }}
+                                className="w-full text-left px-2 py-1 text-xs hover:bg-muted flex items-center justify-between border-b border-border/50"
+                              >
+                                <div>
+                                  <div className="font-medium">{tz.label} • {tz.location}</div>
+                                  {"offset" in tz && typeof tz.offset === 'string' && tz.offset ? (
+                                    <div className="text-muted-foreground text-[10px]">{tz.offset}</div>
+                                  ) : null}
+                                </div>
+                                {secondaryTz === tz.code && <span className="text-primary">✓</span>}
+                              </button>
+                            ))}
+                        </div>
+                        
+                        <button
+                          onClick={() => {
+                            const newFavorite = {
+                              id: uuid(),
+                              timezone: secondaryTz,
+                              customName: tzLabel(secondaryTz),
+                              offset: getTimezoneOffset(secondaryTz),
+                              createdAt: new Date().toISOString(),
+                            };
+                            setClockSettings({
+                              timezoneFavorites: [...(clockSettings.timezoneFavorites || []), newFavorite]
+                            });
+                          }}
+                          className="w-full text-left px-2 py-1 text-xs bg-primary/10 text-primary hover:bg-primary/20 flex items-center gap-1 border-t border-border"
+                        >
+                          <Star className="w-3 h-3" /> Add current as favorite
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {clockSettings.timezoneFavorites && clockSettings.timezoneFavorites.length > 0 && (
+                  <div className="border-t border-border pt-2 mt-2">
+                    <div className="text-muted-foreground mb-1">Favorites:</div>
+                    <div className="space-y-1">
+                      {clockSettings.timezoneFavorites.map((fav) => (
+                        <div key={fav.id} className="flex items-center justify-between gap-1 bg-muted/40 p-1 rounded text-[10px]">
+                          {editingFavorite === fav.id ? (
+                            <input
+                              type="text"
+                              value={favoriteNameInput}
+                              onChange={(e) => setFavoriteNameInput(e.target.value)}
+                              className="flex-1 bg-background border border-border rounded px-1 text-xs"
+                              autoFocus
+                            />
+                          ) : (
+                            <span className="flex-1 truncate">{fav.customName} ({fav.offset})</span>
+                          )}
+                          <div className="flex items-center gap-1">
+                            {editingFavorite === fav.id ? (
+                              <>
+                                <button
+                                  onClick={() => {
+                                    const updated = clockSettings.timezoneFavorites!.map(f =>
+                                      f.id === fav.id ? { ...f, customName: favoriteNameInput } : f
+                                    );
+                                    setClockSettings({ timezoneFavorites: updated });
+                                    setEditingFavorite(null);
+                                  }}
+                                  className="p-0.5 hover:bg-muted"
+                                >
+                                  <Check className="w-3 h-3 text-green-600" />
+                                </button>
+                                <button
+                                  onClick={() => setEditingFavorite(null)}
+                                  className="p-0.5 hover:bg-muted"
+                                >
+                                  <X className="w-3 h-3 text-red-600" />
+                                </button>
+                              </>
+                            ) : (
+                              <>
+                                <button
+                                  onClick={() => setClockSettings({ secondaryTimezone: fav.timezone, secondaryEnabled: true })}
+                                  className="px-1.5 py-0.5 bg-primary/20 text-primary rounded hover:bg-primary/30 text-[10px]"
+                                >
+                                  Use
+                                </button>
+                                <button
+                                  onClick={() => {
+                                    setEditingFavorite(fav.id);
+                                    setFavoriteNameInput(fav.customName);
+                                  }}
+                                  className="p-0.5 hover:bg-muted"
+                                >
+                                  <Edit2 className="w-3 h-3" />
+                                </button>
+                                <button
+                                  onClick={() => {
+                                    const updated = clockSettings.timezoneFavorites!.filter(f => f.id !== fav.id);
+                                    setClockSettings({ timezoneFavorites: updated });
+                                  }}
+                                  className="p-0.5 hover:bg-muted"
+                                >
+                                  <Trash2 className="w-3 h-3 text-red-600" />
+                                </button>
+                              </>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                
                 <label className="flex items-center justify-between gap-3">
                   24-hour format
                   <input
@@ -452,15 +616,29 @@ export function TopBar() {
                     onChange={(e) => setClockSettings({ secondaryFormat24h: e.target.checked })}
                   />
                 </label>
+                
                 <label className="block space-y-1">
                   <span className="text-muted-foreground">Digital skin</span>
                   <select
-                    className="w-full rounded border border-border bg-background px-2 py-1"
+                    className="w-full rounded border border-border bg-background px-2 py-1 text-xs"
                     value={secondaryDigitalSkin}
                     onChange={(e) => setClockSettings({ secondaryDigitalSkin: e.target.value })}
                   >
                     {CLOCK_SKINS.map((skin) => (
                       <option key={skin} value={skin}>{skin}</option>
+                    ))}
+                  </select>
+                </label>
+
+                <label className="block space-y-1">
+                  <span className="text-muted-foreground">Watch format</span>
+                  <select
+                    className="w-full rounded border border-border bg-background px-2 py-1 text-xs"
+                    value={clockSettings.secondaryWatchFormat || 'digital'}
+                    onChange={(e) => setClockSettings({ secondaryWatchFormat: e.target.value as any })}
+                  >
+                    {WATCH_FORMATS.map((fmt) => (
+                      <option key={fmt} value={fmt}>{fmt}</option>
                     ))}
                   </select>
                 </label>

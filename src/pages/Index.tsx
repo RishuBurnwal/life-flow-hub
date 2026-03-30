@@ -14,11 +14,10 @@ import { PomodoroView } from '@/components/PomodoroView';
 import { CalendarView } from '@/components/CalendarView';
 import { MindmapView } from '@/components/MindmapView';
 import { SDLCView } from '@/components/SDLCView';
-import { AiPanel } from '@/components/AiPanel';
+import { AiPanel } from '@/ai/AiPanel';
 import { CommandPalette } from '@/components/CommandPalette';
 import { StickyNotesOverlay } from '@/components/StickyNotesOverlay';
 import { PlaceholderView } from '@/components/PlaceholderView';
-import { WorkspaceSelector } from '@/components/WorkspaceSelector';
 
 function Workspace() {
   const { activeView } = useStore();
@@ -48,7 +47,7 @@ function Workspace() {
 }
 
 export default function Index() {
-  const { theme, focusMode, activeProjectId, setActiveProject, projects } = useStore();
+  const { theme, focusMode, activeProjectId, setActiveProject, projects, isInitialized } = useStore();
   const params = useParams();
   const navigate = useNavigate();
 
@@ -89,12 +88,28 @@ export default function Index() {
   }, [params.projectId, activeProjectId, projects, setActiveProject]);
 
   useEffect(() => {
+    if (!isInitialized) return;
+
+    const paramId = params.projectId;
     if (activeProjectId) {
       navigate(`/workspace/${activeProjectId}`, { replace: true });
-    } else if (!params.projectId) {
-      navigate('/', { replace: true });
+      return;
     }
-  }, [activeProjectId, navigate, params.projectId]);
+
+    if (!paramId) {
+      navigate('/welcome', { replace: true });
+      return;
+    }
+
+    const exists = projects.some((p) => p.id === paramId);
+    if (!exists) {
+      navigate('/welcome', { replace: true });
+    }
+  }, [activeProjectId, isInitialized, navigate, params.projectId, projects]);
+
+  if (!activeProjectId) {
+    return null;
+  }
 
   return (
     <div className="h-screen min-h-0 flex flex-col overflow-hidden bg-background">
@@ -102,7 +117,7 @@ export default function Index() {
       <div className="flex-1 min-h-0 min-w-0 flex overflow-hidden">
         {!focusMode && <Sidebar />}
         <main className="flex-1 min-h-0 min-w-0 flex flex-col overflow-hidden">
-          {activeProjectId ? <Workspace /> : <WorkspaceSelector />}
+          <Workspace />
         </main>
         <AnimatePresence>
           {!focusMode && <AiPanel />}

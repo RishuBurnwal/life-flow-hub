@@ -32,7 +32,7 @@ export function StatusBar() {
         )}
         <span className="flex items-center gap-1">
           <Wifi className="w-3 h-3" />
-          {aiConfig.provider === 'browser' ? 'Phi-3 local' : aiConfig.provider}
+          {aiConfig.provider === 'browser' ? 'Local AI' : aiConfig.provider}
         </span>
       </div>
     </footer>

@@ -130,6 +130,22 @@ CREATE TABLE IF NOT EXISTS ai_memory (
   skill_used TEXT DEFAULT NULL
 );
 
+CREATE TABLE IF NOT EXISTS ai_brain_profile (
+  project_id TEXT PRIMARY KEY,
+  soul_prompt TEXT NOT NULL,
+  habitual_context TEXT NOT NULL,
+  behavior TEXT NOT NULL,
+  active_skills TEXT NOT NULL,
+  version INTEGER DEFAULT 1,
+  last_updated TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS app_meta (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL,
+  updated_at TEXT DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS time_logs (
   id TEXT PRIMARY KEY,
   project_id TEXT NOT NULL,

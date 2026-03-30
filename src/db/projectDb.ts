@@ -7,10 +7,17 @@ const IDB_VERSION = 1;
 
 let sqlPromise: Promise<SqlJsStatic> | null = null;
 
+const getSqlWasmPath = () => {
+  const base = import.meta.env.BASE_URL || "/";
+  const normalizedBase = base.endsWith("/") ? base : `${base}/`;
+  return `${normalizedBase}sql-wasm.wasm`;
+};
+
 const getSql = () => {
   if (!sqlPromise) {
     sqlPromise = initSqlJs({
-      locateFile: (file) => new URL(`./${file}`, import.meta.url).toString(),
+      // Keep this path rooted at Vite BASE_URL so direct-route loads still find WASM.
+      locateFile: () => getSqlWasmPath(),
     });
   }
   return sqlPromise;

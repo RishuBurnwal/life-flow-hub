@@ -5,6 +5,7 @@ import { Calendar, Settings2 } from 'lucide-react';
 import { useStore } from '@/stores/useStore';
 
 type ClockSkin = 'minimal' | 'retro' | 'glass' | 'neon' | 'bold' | 'dots';
+type WatchFormat = 'digital' | 'analog' | 'hybrid';
 
 const digitalVariants = {
   initial: { scale: 1, boxShadow: '0 1px 3px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.06)' },
@@ -41,6 +42,7 @@ interface ClockWidgetProps {
   format24h: boolean;
   skin: ClockSkin;
   secondaryTime?: string | null;
+  watchFormat?: WatchFormat;
   showAnalog?: boolean;
   compact?: boolean;
   locationLabel?: string;
@@ -54,6 +56,7 @@ export function ClockWidget({
   format24h,
   skin,
   secondaryTime,
+  watchFormat,
   showAnalog,
   compact,
   locationLabel,
@@ -88,6 +91,10 @@ export function ClockWidget({
     const rect = (e.currentTarget as HTMLButtonElement).getBoundingClientRect();
     onOpenSettings(rect, timezone);
   };
+
+  const resolvedFormat: WatchFormat = watchFormat || (showAnalog ? 'analog' : 'digital');
+  const showAnalogFace = resolvedFormat === 'analog' || resolvedFormat === 'hybrid';
+  const showDigitalReadout = resolvedFormat === 'digital' || resolvedFormat === 'hybrid';
 
   const digitalClass = (() => {
     switch (skin) {
@@ -127,12 +134,12 @@ export function ClockWidget({
         initial="initial"
         whileHover="hover"
         whileTap="tap"
-        variants={showAnalog ? analogVariants : digitalVariants}
+        variants={showAnalogFace ? analogVariants : digitalVariants}
         onClick={handleClick}
-        className={`relative flex items-center gap-2.5 ${compact ? 'px-2.5 py-1.5' : 'px-3 py-2'} rounded-xl transition-all cursor-pointer select-none ${showAnalog ? 'bg-surface-elevated' : digitalClass}`}
+        className={`relative flex items-center gap-2.5 ${compact ? 'px-2.5 py-1.5' : 'px-3 py-2'} rounded-xl transition-all cursor-pointer select-none ${showAnalogFace ? 'bg-surface-elevated' : digitalClass}`}
         aria-label={`Clock ${label}`}
       >
-        {showAnalog ? (
+        {showAnalogFace ? (
           <div className={`${compact ? 'w-12 h-12' : 'w-14 h-14'} relative rounded-full border border-border shadow-md ${analogFace}`}>
           <svg viewBox="0 0 100 100" className="w-full h-full">
             {[...Array(12)].map((_, idx) => (
@@ -154,7 +161,9 @@ export function ClockWidget({
             <circle cx="50" cy="50" r="3" fill="currentColor" className="text-primary" />
           </svg>
           </div>
-        ) : (
+        ) : null}
+
+        {showDigitalReadout ? (
           <div className="flex flex-col items-start min-w-[140px]">
             <div className={`${compact ? 'text-base' : 'text-lg'} font-semibold tabular-nums leading-tight flex items-baseline gap-1`}>
               <span>{formatTime(zoned, format24h)}</span>
@@ -165,7 +174,7 @@ export function ClockWidget({
             )}
             <div className="text-[11px] text-text-tertiary">{formatDate(zoned)}</div>
           </div>
-        )}
+        ) : null}
         <div className="flex flex-col items-start gap-0.5 min-w-[120px]">
           <span className="text-xs font-medium text-muted-foreground">{label}</span>
           <span className="text-[11px] text-text-tertiary truncate max-w-[180px]">{locationLabel || timezone}</span>
