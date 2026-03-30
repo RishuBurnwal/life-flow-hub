@@ -1,7 +1,24 @@
 node_modules/
 dist/
+.env
+.env.*
+.DS_Store
 
-# Large local media assets (tracked separately if needed)
-public/music/*.mp3
-public/music/*.mp4
-public/music/*.webm
+# Large local media assets
+public/music/
+
+# Ignore large model and binary files
+public/ai/models/
+public/models/
+*.onnx
+*.bin
+*.pt
+*.ckpt
+*.tflite
+*.pb
+*.h5
+*.wasm
+
+# IDE files
+.vscode/
+.idea/
